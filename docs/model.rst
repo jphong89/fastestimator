@@ -557,12 +557,12 @@ to create the summary file for training.
     from fastestimator.util.tfrecord import add_summary, get_features
 
     # First, get feature name and related information
-    print(get_features("/data/data/Xray/chestfrontal/chestfrontal_train_0000.tfrecords"))
+    print(get_features("/home/data/tf_train_0000.tfrecords"))
 
     # Next, fill in the required field
-    add_summary(data_dir="/data/data/Xray/chestfrontal", 
-                train_prefix="chestfrontal_train", 
-                eval_prefix= "chestfrontal_val", 
+    add_summary(data_dir="/data/home/", 
+                train_prefix="tf_train_", 
+                eval_prefix= "tf_eval_", 
                 feature_name=["image_raw", "image_labels"], 
                 feature_dtype=["uint8", "int64"])
 
@@ -574,15 +574,16 @@ Full Code Demo
 * Natural Language Processing: IMDB-Review_
 
 
-.. _pipeline-api: https://github.build.ge.com/pages/edisonaitk/fastestimator/api.html#pipeline
-.. _network-api: https://github.build.ge.com/pages/edisonaitk/fastestimator/api.html#network
-.. _dynamic-preprocess: https://github.build.ge.com/pages/edisonaitk/fastestimator/api.html#dynamic-preprocess
-.. _static-preprocess: https://github.build.ge.com/pages/edisonaitk/fastestimator/api.html#static-preprocess
-.. _2D-augmentation: https://github.build.ge.com/pages/edisonaitk/fastestimator/api.html#augmentation
+.. _pipeline-api: https://github.com/pages/fastestimator/fastestimator/api.html#pipeline
+.. _network-api: https://github.com/pages/fastestimator/fastestimator/api.html#network
+.. _dynamic-preprocess: https://github.com/pages/fastestimator/fastestimator/api.html#dynamic-preprocess
+.. _static-preprocess: https://github.com/pages/fastestimator/fastestimator/api.html#static-preprocess
+.. _2D-augmentation: https://github.com/pages/fastestimator/fastestimator/api.html#augmentation
 .. _Losses: https://www.tensorflow.org/api_docs/python/tf/keras/losses
 .. _Metrics: https://www.tensorflow.org/api_docs/python/tf/keras/metrics
 .. _Optimizers: https://www.tensorflow.org/api_docs/python/tf/keras/optimizers
 .. _Callbacks: https://www.tensorflow.org/api_docs/python/tf/keras/callbacks
-.. _Mnist-Classification: https://github.build.ge.com/edisonaitk/public_model/blob/master/classification_mnist/mnist.ipynb
-.. _Cub200-Segmentation: https://github.build.ge.com/edisonaitk/public_model/blob/master/segmentation_cub200/cub200.ipynb
-.. _IMDB-Review: https://github.build.ge.com/edisonaitk/public_model/blob/master/sentiment_classification_imdb/imdb.ipynb
+.. _Mnist-Classification: https://github.com/fastestimator/examples/blob/master/classification_mnist/mnist.ipynb
+.. _Cub200-Segmentation: https://github.com/fastestimator/examples/blob/master/segmentation_cub200/cub200.ipynb
+.. _IMDB-Review: https://github.com/fastestimator/examples/blob/master/sentiment_classification_imdb/imdb.ipynb
+

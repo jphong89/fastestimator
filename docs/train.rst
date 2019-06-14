@@ -103,6 +103,7 @@ For users that prefer running codes in python console (e.g., Jupyter notebook, S
 
 
 
-.. _mnist: https://github.build.ge.com/edisonaitk/fastestimator/blob/master/tutorial/mnist.py
-.. _JSON file: https://github.build.ge.com/edisonaitk/fastestimator/blob/master/tutorial/mnist_args.json
-.. _this notebook: https://github.build.ge.com/edisonaitk/fastestimator/blob/master/tutorial/mnist.ipynb
+.. _mnist: https://github.com/fastestimator/fastestimator/blob/r0.2/tutorial/mnist.py
+.. _JSON file: https://github.com/fastestimator/fastestimator/blob/r0.2/tutorial/mnist_args.json
+.. _this notebook: https://github.com/fastestimator/fastestimator/blob/r0.2/tutorial/mnist.ipynb
+

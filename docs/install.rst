@@ -11,8 +11,7 @@ Prerequisites
 Installation
 ----------------
 
-  #. Download `fastestimator`_
-  #. ``pip install fastestimator-0.2.zip``
+  #. ``pip install fastestimator``
 
 Docker
 -------
@@ -33,5 +32,4 @@ Pull Image from Docker Hub
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 :GPU: ``docker pull fastestimator/fastestimator:latest-gpu``
 
-.. _fastestimator: https://github.build.ge.com/edisonaitk/fastestimator/archive/v0.2.zip
 .. _Docker-Hub: https://hub.docker.com/r/fastestimator/fastestimator/tags
