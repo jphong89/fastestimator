@@ -12,6 +12,7 @@ import os
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
+
 class Estimator:
     """
     ``Estimator`` class compiles all the components necessary to train a model.
@@ -113,7 +114,7 @@ class Estimator:
     def _run_traces_begin(self, mode):
         for trace in self.traces:
             trace.begin(mode)
-    
+
     def _run_traces_on_epoch_begin(self, mode, logs):
         self.losses = []
         for trace in self.traces:
