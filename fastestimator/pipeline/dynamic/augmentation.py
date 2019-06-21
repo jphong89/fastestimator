@@ -295,7 +295,7 @@ class Augmentation(AbstractAugmentation):
             Transformed (augmented) data
         """
         import cv2
-        augment_data = cv2.warpAffine(data, self.transform_matrix[:2, :],
+        augment_data = cv2.warpAffine(data.astype(np.float32), self.transform_matrix[:2, :],
                                                         (data.shape[0], data.shape[1]), flags=cv2.WARP_INVERSE_MAP)
         augment_data = np.fliplr(augment_data) if self.flip_left_right else augment_data
         augment_data = np.flipud(augment_data) if self.flip_up_down else augment_data

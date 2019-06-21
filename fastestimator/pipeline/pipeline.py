@@ -66,7 +66,7 @@ class Pipeline:
 
         """
         self.inputs = inputs
-        self.num_subprocess = min(8, mp.cpu_count()//self.num_local_process)
+        self.num_subprocess = min(8, mp.cpu_count()//self.num_local_process) // 2
         if self.train_data:
             tfrecorder = TFRecorder(train_data=self.train_data,
                                     feature_name=self.feature_name, 
@@ -139,18 +139,36 @@ class Pipeline:
         if self.data_filter is not None and self.data_filter.mode in [mode, "both"]:
             dataset = dataset.filter(lambda dataset: self.data_filter.predicate_fn(dataset))
         dataset = dataset.batch(self.batch_size)
-        dataset = dataset.prefetch(buffer_size=1)
+        dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
         return dataset
 
     def _transform_batch(self, batch_data, mode):
-        for feature_idx, feature_name in enumerate(batch_data.keys()):
-            feature = batch_data[feature_name].numpy()
-            transform_list = self.transform_train[feature_idx]
-            for process_obj in transform_list:
-                if isinstance(process_obj, AbstractAugmentation):
-                    process_obj.setup()
-                feature = np.array(list(map(process_obj.transform, feature)))
-            batch_data[feature_name] = feature
+        def _transform_single_example(single_example):
+            randomized_set = set()
+            for feature_idx, (feature_name, feature_value) in enumerate(single_example.items()):
+                feature_value = feature_value
+                transform_list = self.transform_train[feature_idx]
+                for process_obj in transform_list:
+                    if isinstance(process_obj, AbstractAugmentation):
+                        if process_obj.mode in [mode, "both"]:
+                            process_obj.height = feature_value.shape[0]
+                            process_obj.width = feature_value.shape[1]
+                            if process_obj not in randomized_set:
+                                process_obj.setup()
+                                randomized_set.add(process_obj)
+                    feature_value = process_obj.transform(feature_value)
+                single_example[feature_name] = feature_value
+            return single_example
+            
+        # \TODO(jp) benchmark this line
+        for k in batch_data.keys():
+            batch_data[k] = np.ascontiguousarray(batch_data[k].numpy())
+        batch_data_slice_it = [{k: v[idx] for (k, v) in batch_data.items()} for idx in range(self.batch_size)]
+        # result = map(_transform_single_example, batch_data_slice_it)
+        
+        for idx, result in enumerate(map(_transform_single_example, batch_data_slice_it)):
+            for (result_key, result_value) in result.items():
+                batch_data[result_key][idx] = result_value
         return batch_data
 
     def _input_source(self, mode, num_steps):
@@ -162,6 +180,7 @@ class Pipeline:
         Returns:
             Iterator: An iterator that can provide a streaming of processed data
         """
+
         dataset = self._input_stream(mode)
         # init aug/preprocess objs
         for feature_idx, feature_name in enumerate(self.feature_name):
