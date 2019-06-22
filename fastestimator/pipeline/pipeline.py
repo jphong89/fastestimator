@@ -4,12 +4,30 @@ from fastestimator.util.util import convert_tf_dtype
 import multiprocessing as mp
 import tensorflow as tf
 import numpy as np
+import functools
 import time
 import json
 import os
 
 
-class Pipeline:
+# def _apply(data, mode, transform_train):
+#     for feature_idx, feature_name in enumerate(data.keys()):
+#         transform_list = transform_train[feature_idx]
+#         for process_obj in transform_list:
+#             if isinstance(process_obj, AbstractAugmentation):
+#                 # process_obj.height = data[feature_name].shape[0]
+#                 # process_obj.width = data[feature_name].shape[1]
+#                 process_obj.setup()
+#             data[feature_name] = process_obj.transform(data[feature_name])
+#     return data
+
+def _f(data, aug_obj):
+    # _aug_obj = aug_obj
+    aug_obj.setup()
+    return aug_obj.transform(data.astype(np.float32))
+
+
+class Pipeline(object):
     """
     Class representing the data pipeline required for fastestimator
 
@@ -38,6 +56,8 @@ class Pipeline:
                  validation_data=None,
                  data_filter=None,
                  **kwargs):
+        self.seed = 0
+        self.pool = mp.Pool(os.cpu_count())
         self.batch_size = batch_size
         self.train_data = train_data
         self.feature_name = feature_name
@@ -66,7 +86,7 @@ class Pipeline:
 
         """
         self.inputs = inputs
-        self.num_subprocess = min(8, mp.cpu_count()//self.num_local_process) // 2
+        self.num_subprocess = min(8, mp.cpu_count()//self.num_local_process)
         if self.train_data:
             tfrecorder = TFRecorder(train_data=self.train_data,
                                     feature_name=self.feature_name, 
@@ -139,48 +159,79 @@ class Pipeline:
         if self.data_filter is not None and self.data_filter.mode in [mode, "both"]:
             dataset = dataset.filter(lambda dataset: self.data_filter.predicate_fn(dataset))
         dataset = dataset.batch(self.batch_size)
-        dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+        dataset = dataset.prefetch(1)
         return dataset
 
     def _transform_batch(self, batch_data, mode):
-        def _transform_single_example(single_example):
-            randomized_set = set()
-            for feature_idx, (feature_name, feature_value) in enumerate(single_example.items()):
-                feature_value = feature_value
-                transform_list = self.transform_train[feature_idx]
-                for process_obj in transform_list:
-                    if isinstance(process_obj, AbstractAugmentation):
-                        if process_obj.mode in [mode, "both"]:
-                            process_obj.height = feature_value.shape[0]
-                            process_obj.width = feature_value.shape[1]
-                            if process_obj not in randomized_set:
-                                process_obj.setup()
-                                randomized_set.add(process_obj)
-                    feature_value = process_obj.transform(feature_value)
-                single_example[feature_name] = feature_value
-            return single_example
-            
-        # \TODO(jp) benchmark this line
-        for k in batch_data.keys():
-            batch_data[k] = np.ascontiguousarray(batch_data[k].numpy())
-        batch_data_slice_it = [{k: v[idx] for (k, v) in batch_data.items()} for idx in range(self.batch_size)]
-        # result = map(_transform_single_example, batch_data_slice_it)
-        
-        for idx, result in enumerate(map(_transform_single_example, batch_data_slice_it)):
-            for (result_key, result_value) in result.items():
-                batch_data[result_key][idx] = result_value
+
+        # batch_data_list = [
+        #     {k: batch_data[k][idx].numpy() for k in batch_data.keys()}
+        #     for idx in range(self.batch_size)
+        # ]
+        # with mp.Pool(2) as pool:
+        # out = self.pool.map_async(
+        #     functools.partial(
+        #         _apply,
+        #         mode=mode,
+        #         transform_train=self.transform_train
+        #     ),
+        #     batch_data_list
+        # )
+        # result = list(
+        #     map(functools.partial(_apply, mode=mode), batch_data_list)
+        # )
+        # batch_data = {
+        #     k: np.stack(
+        #         [
+        #             out.get()[idx][k] for idx in range(self.batch_size)
+        #         ],
+        #         axis=0
+        #     )
+        #     for k in batch_data.keys()
+        # }
+        self.seed += 1
+        check_set = set()
+        for feature_idx, feature_name in enumerate(batch_data.keys()):
+            feature = batch_data[feature_name].numpy()
+            transform_list = self.transform_train[feature_idx]
+            for process_obj in transform_list:
+                if isinstance(process_obj, AbstractAugmentation):
+                    if process_obj.mode in [mode, "both"]:
+                        if process_obj not in check_set:
+                            process_obj.setup()
+                            check_set.add(process_obj)
+                        # feature = np.array(
+                        #     self.pool.map_async(
+                        #         functools.partial(_f, aug_obj=process_obj),
+                        #         feature
+                        #     ).get()
+                            # list(
+                            #     map(
+                            #         functools.partial(_f, aug_obj=process_obj),
+                            #         feature
+                            #     )
+                            # )
+                            # )
+                # else:
+                feature = np.array(
+                    self.pool.map_async(
+                        process_obj.transform,
+                        feature
+                    ).get()
+                    # list(
+                    #     map(process_obj.transform, feature)
+                    # )
+                )
+            batch_data[feature_name] = feature
         return batch_data
 
     def _input_source(self, mode, num_steps):
         """Package the data from tfrecord to model
-
         Args:
             mode (str): mode for current pipeline ("train", "eval" or "both")
-
         Returns:
             Iterator: An iterator that can provide a streaming of processed data
         """
-
         dataset = self._input_stream(mode)
         # init aug/preprocess objs
         for feature_idx, feature_name in enumerate(self.feature_name):
@@ -195,38 +246,7 @@ class Pipeline:
         for batch_data in dataset.take(num_steps):
             yield self._transform_batch(batch_data, mode)
 
-
-    def _combine_dict(self, dict_list):
-        """combine same key of multiple dictionaries list into one dictinoary
-
-        Args:
-            dict_list (list): list of dictionaries
-        
-        Returns:
-            dict: combined dictionary
-        """
-        combined_batch = {}
-        for feature in dict_list[0].keys():
-            combined_batch[feature] = np.array(list(d[feature] for d in dict_list))
-        return combined_batch
-        
-    def _get_dict_slice(self, dictionary, index):
-        """slice a dictionary for each key and return the sliced dictionary
-        
-        Args:
-            dictionary (dict): original dictionary
-            index (int): slice index
-        
-        Returns:
-            dict: sliced dictionary with same key as original dictionary
-        """
-        feature_slice = dict()
-        keys = dictionary.keys()
-        for key in keys:
-            feature_slice[key] = dictionary[key][index]
-        return feature_slice
-
-    def final_transform(self, preprocessed_data):
+    def final_transform(self, data, mode):
         """
         Can be overloaded to change tensors in any manner
 
@@ -236,6 +256,26 @@ class Pipeline:
         Returns:
             A dictionary of tensor data in the form of a tf.data object.
         """
+        preprocessed_data = {}
+        randomized_list = []
+        for idx in range(len(self.feature_name)):
+            transform_list = self.transform_train[idx]
+            feature_name = self.feature_name[idx]
+            preprocess_data = data[feature_name].numpy()
+            for preprocess_obj in transform_list:
+                preprocess_obj.feature_name = feature_name
+                # preprocess_obj.decoded_data = data
+                if isinstance(preprocess_obj, AbstractAugmentation):
+                    if preprocess_obj.mode == mode or preprocess_obj.mode == "both":
+                        preprocess_obj.height = preprocess_data.shape[1]
+                        preprocess_obj.width = preprocess_data.shape[2]
+                        if preprocess_obj not in randomized_list:
+                            preprocess_obj.setup()
+                            randomized_list.append(preprocess_obj)
+                # import pdb; pdb.set_trace()
+                # preprocess_data = preprocess_obj.transform(preprocess_data)
+                preprocess_data = np.array(list(map(preprocess_obj.transform, preprocess_data)))
+            preprocessed_data[feature_name] = preprocess_data
         return preprocessed_data
 
     def edit_feature(self, feature):
