@@ -137,6 +137,7 @@ class Pipeline:
         dataset = dataset.map(lambda dataset: self.read_and_decode(dataset), num_parallel_calls=self.num_subprocess)
         if self.data_filter is not None and self.data_filter.mode in [mode, "both"]:
             dataset = dataset.filter(lambda dataset: self.data_filter.predicate_fn(dataset))
+
         dataset = dataset.map(lambda dataset: self._preprocess_fn(dataset, mode), num_parallel_calls=self.num_subprocess)
         dataset = dataset.batch(self.batch_size)
         dataset = dataset.prefetch(buffer_size=1)
@@ -162,10 +163,8 @@ class Pipeline:
                 preprocess_obj.decoded_data = decoded_data
                 if isinstance(preprocess_obj, AbstractAugmentation):
                     if preprocess_obj.mode == mode or preprocess_obj.mode == "both":
-                        preprocess_obj.height = preprocess_data.get_shape()[0]
-                        preprocess_obj.width = preprocess_data.get_shape()[1]
+                        preprocess_obj.flag = (preprocess_obj in randomized_list)                        
                         if preprocess_obj not in randomized_list:
-                            preprocess_obj.setup()
                             randomized_list.append(preprocess_obj)
                 preprocess_data = preprocess_obj.transform(preprocess_data)
             preprocessed_data[feature_name] = preprocess_data
