@@ -110,7 +110,6 @@ def get_estimator(style_img_path, data_path=None, style_weight=5.0, content_weig
 
     model = FEModel(model_def=styleTransferNet,
                     model_name="style_transfer_net",
-                    loss_name="loss",
                     optimizer=tf.keras.optimizers.Adam(1e-3))
 
     network = Network(ops=[
@@ -121,8 +120,7 @@ def get_estimator(style_img_path, data_path=None, style_weight=5.0, content_weig
         StyleContentLoss(style_weight=style_weight,
                          content_weight=content_weight,
                          tv_weight=tv_weight,
-                         inputs=('y_pred', 'y_style', 'y_content', 'image_out'),
-                         outputs='loss')
+                         inputs=('y_pred', 'y_style', 'y_content', 'image_out'))
     ])
     estimator = Estimator(network=network, pipeline=pipeline, epochs=2)
     return estimator
