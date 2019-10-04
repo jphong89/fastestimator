@@ -27,13 +27,14 @@ from fastestimator.util.op import TensorOp
 
 DIM = 64
 
+
 class GLoss(Loss):
     """Compute generator loss."""
     def __init__(self, inputs, outputs=None, mode=None):
         super().__init__(inputs=inputs, outputs=outputs, mode=mode)
 
     def forward(self, data, state):
-        return -tf.reduce_mean(data, axis=[1,2,3])
+        return -tf.reduce_mean(data, axis=[1, 2, 3])
 
 
 class DLoss(Loss):
@@ -43,16 +44,26 @@ class DLoss(Loss):
 
     def forward(self, data, state):
         true, fake = data
-        total_loss = tf.reduce_mean(true, axis=[1,2,3]) - tf.reduce_mean(fake, axis=[1,2,3])
+        total_loss = tf.reduce_mean(true, axis=[1, 2, 3]) - tf.reduce_mean(fake, axis=[1, 2, 3])
         return total_loss
+
 
 class RandomInterpolate(TensorOp):
     def forward(self, data, state):
-        pass
+        fake, real = data
+        batch_size = state["batch_size"]
+        coeff = tf.random.uniform(shape=[batch_size, 1, 1, 1], minval=0, maxval=1)
+        return real + coeff * (fake - real)
 
 class ComputeGradientPenalty(TensorOp):
-    pass
+    def forward(self, data, state):
+        interpolated_data, d_fake = data
+        tape = state['tape']
 
+	with tape.stop_recording():
+            grad_ = tape.gradient(d_fake, interpolated_data)
+
+        return grad_
 
 def make_generator_model():
     model = tf.keras.Sequential()
@@ -86,6 +97,7 @@ def make_discriminator_model():
     model.add(layers.Dense(1))
     return model
 
+
 class Myrescale(TensorOp):
     """Scale image values from uint8 to float32 between -1 and 1."""
     def forward(self, data, state):
@@ -103,11 +115,11 @@ def get_estimator(batch_size=256, epochs=50, model_dir=tempfile.mkdtemp()):
     g_femodel = FEModel(model_def=make_generator_model,
                         model_name="gen",
                         loss_name="gloss",
-                        optimizer=tf.optimizers.Adam(1e-4))
+                        optimizer=tf.optimizers.Adam(1e-4, 0.5))
     d_femodel = FEModel(model_def=make_discriminator_model,
                         model_name="disc",
                         loss_name="dloss",
-                        optimizer=tf.optimizers.Adam(1e-4))
+                        optimizer=tf.optimizers.Adam(1e-4, 0.5))
     network = fe.Network(ops=[
         ModelOp(inputs=lambda: tf.random.normal([batch_size, DIM]), model=g_femodel),
         ModelOp(model=d_femodel, outputs="pred_fake"),
