@@ -12,5 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-from fastestimator.architecture.pytorch.lenet import LeNet
-from fastestimator.architecture.pytorch.unet import UNet
+import torch
+import torch.nn as nn
+import torch.nn.functional as fn
