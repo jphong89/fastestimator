@@ -12,67 +12,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-from typing import Tuple, Iterable
+from typing import Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as fn
+from torch.nn import functional as F
+from torch.nn.init import kaiming_normal_ as he_normal
+
+
+class UNetEncoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True))
+
+        for l in self.layers:
+            if isinstance(l, nn.Conv2d):
+                he_normal(l.weight.data)
+                l.bias.data.zero_()
+
+    def forward(self, x):
+        out = self.layers(x)
+        return out, F.max_pool2d(out, 2)
+
+
+class UNetDecoderBlock(nn.Module):
+    def __init__(self, in_channels, mid_channels, out_channels):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid_channels, mid_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(mid_channels, out_channels, 3, padding=1),
+            nn.ReLU(inplace=True))
+
+        for l in self.layers:
+            if isinstance(l, nn.Conv2d):
+                he_normal(l.weight.data)
+                l.bias.data.zero_()
+
+    def forward(self, x):
+        return self.layers(x)
 
 
 class UNet(nn.Module):
-    def __init__(self,
-                 input_shape: Tuple[int, int, int] = (3, 128, 128),
-                 dropout: float = 0.5,
-                 nchannels: Iterable[int] = (64, 128, 256, 512, 1024),
-                 nclasses: int = 1,
-                 bn: str = None,
-                 activation: str = 'relu',
-                 upsampling: str = 'bilinear',
-                 dilation_rates: Iterable[int] = (1, 1, 1, 1, 1),
-                 residual: str = None):
+    def __init__(self, input_size: Tuple[int, int, int] = (1, 128, 128)):
         super().__init__()
-        self.input_shape = input_shape
-        self.dropout = dropout
-        self.nchannels = nchannels
+        self.input_size = input_size
+        self.enc1 = UNetEncoderBlock(in_channels=input_size[0],
+                                     out_channels=64)
+        self.enc2 = UNetEncoderBlock(in_channels=64, out_channels=128)
+        self.enc3 = UNetEncoderBlock(in_channels=128, out_channels=256)
+        self.enc4 = UNetEncoderBlock(in_channels=256, out_channels=512)
+        self.bottle_neck = UNetDecoderBlock(in_channels=512,
+                                            mid_channels=1024,
+                                            out_channels=512)
+        self.dec4 = UNetDecoderBlock(in_channels=1024,
+                                     mid_channels=512,
+                                     out_channels=256)
+        self.dec3 = UNetDecoderBlock(in_channels=512,
+                                     mid_channels=256,
+                                     out_channels=128)
+        self.dec2 = UNetDecoderBlock(in_channels=256,
+                                     mid_channels=128,
+                                     out_channels=64)
+        self.dec1 = nn.Sequential(nn.Conv2d(128, 64, 3, padding=1),
+                                  nn.ReLU(inplace=True),
+                                  nn.Conv2d(64, 64, 3, padding=1),
+                                  nn.ReLU(inplace=True), nn.Conv2d(64, 1, 1),
+                                  nn.Sigmoid())
+
+        for l in self.dec1:
+            if isinstance(l, nn.Conv2d):
+                he_normal(l.weight.data)
+                l.bias.data.zero_()
 
     def forward(self, x):
-        return x
+        x1, x_e1 = self.enc1(x)
+        x2, x_e2 = self.enc2(x_e1)
+        x3, x_e3 = self.enc3(x_e2)
+        x4, x_e4 = self.enc4(x_e3)
 
-
-class UNetDownSampleBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size):
-        super().__init__()
-        padding = int(kernel_size // 2)
-        self.layers = nn.Sequential([
-            nn.Conv2d(in_channels, out_channels, kernel_size, padding=padding),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size, padding=padding),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2)
-        ])
-
-    def forward(self, x):
-        return self.layers(x)
-
-
-class UNetUpSampleBlock(nn.Module):
-    def __init__(self, in_channels, mid_channels, out_channels, kernel_size):
-        super().__init__()
-        padding = int(kernel_size // 2)
-        self.layers = nn.Sequential([
-            nn.Conv2d(in_channels, mid_channels, kernel_size, padding=padding),
-            nn.BatchNorm2d(mid_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, mid_channels, kernel_size, padding=padding),
-            nn.BatchNorm2d(mid_channels),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(mid_channels,
-                               out_channels,
-                               kernel_size=2,
-                               stride=2)
-        ])
-
-    def forward(self, x):
-        return self.layers(x)
+        x_bottle_neck = self.bottle_neck(x_e4)
+        x_d4 = self.dec4(torch.cat((x_bottle_neck, x4), 1))
+        x_d3 = self.dec3(torch.cat((x_d4, x3), 1))
+        x_d2 = self.dec2(torch.cat((x_d3, x2), 1))
+        x_out = self.dec1(torch.cat((x_d2, x1), 1))
+        return x_out
