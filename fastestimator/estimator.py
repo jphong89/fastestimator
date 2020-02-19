@@ -13,16 +13,17 @@
 # limitations under the License.
 # ==============================================================================
 from collections import ChainMap
-from typing import Iterable, List, Optional, Union, Set
+from typing import Iterable, List, Optional, Set, Union
 
 import tensorflow as tf
+from torch.utils.data import DataLoader
 
-from fastestimator.backend import to_tensor
+from fastestimator.backend import to_tensor, to_type
 from fastestimator.network import BaseNetwork, TFNetwork, TorchNetwork
 from fastestimator.pipeline import Pipeline
 from fastestimator.trace import EvalEssential, Logger, Trace, TrainEssential
-from fastestimator.util import System, Data
-from fastestimator.util.util import to_list, to_set
+from fastestimator.util import Data, System
+from fastestimator.util.util import draw, to_list, to_set
 
 
 class Estimator:
@@ -35,14 +36,13 @@ class Estimator:
         network: Network object that defines models and their external connection. It should be an instance of
             `fastestimator.network.network.Network`
         epochs: Number of epooch to run.
-        steps_per_epoch: maximum steps to run for each epoch. If None, all data will be used
+        max_steps_per_epoch: maximum steps to run for each epoch. If None, all data will be used
         traces: List of the traces objects to run during training. If None, there will be only basic
             traces.
         log_steps: Interval steps of logging. Defaults to 100.
         monitor_names: Additional keys to print in logger
     """
     pipeline: Pipeline
-    steps_per_epoch: Optional[int]
     traces: List[Trace]
     monitor_names: Set[str]
 
@@ -50,21 +50,21 @@ class Estimator:
                  pipeline: Pipeline,
                  network: BaseNetwork,
                  epochs: int,
-                 steps_per_epoch: Optional[int] = None,
+                 max_steps_per_epoch: Optional[int] = None,
                  traces: Union[None, Trace, Iterable[Trace]] = None,
                  log_steps: Optional[int] = 100,
                  monitor_names: Union[None, str, Iterable[str]] = None):
         self.pipeline = pipeline
         self.network = network
-        self.steps_per_epoch = steps_per_epoch
         self.traces = to_list(traces)
         assert log_steps is None or log_steps >= 0, \
             "log_steps must be None or positive (or 0 to disable only train logging)"
         self.monitor_names = to_set(monitor_names)
-        self.system = System(log_steps=log_steps, epochs=epochs)
+        self.system = System(log_steps=log_steps, epochs=epochs, max_steps_per_epoch=max_steps_per_epoch)
         self.trace_inputs = dict()
 
     def fit(self):
+        draw()
         self.traces = self._prepare_traces()
         self._prepare_system()
         self._check_keys()
@@ -78,8 +78,12 @@ class Estimator:
         for epoch in signature_epochs:
             for mode in self.pipeline.get_modes():
                 self.network.load_epoch(mode, epoch)
-                batch = next(iter(self.pipeline.get_loader(mode, epoch)))
-                batch = self._configure_tensor(batch)
+                loader = self._configure_loader(self.pipeline.get_loader(mode, epoch))
+                if isinstance(loader, tf.data.Dataset):
+                    batch = list(loader.take(1))[0]
+                else:
+                    batch = next(iter(loader))
+                batch = self._configure_tensor(loader, batch)
                 prediction = self.network.run_step(batch, {"mode": mode, "warmup": True})
                 self.network.unload_epoch()
 
@@ -131,11 +135,11 @@ class Estimator:
     def _run_epoch(self):
         self._run_traces_on_epoch_begin()
         self.network.load_epoch(mode=self.system.mode, epoch=self.system.epoch_idx)
-        self.system.loader = self.pipeline.get_loader(mode=self.system.mode, epoch=self.system.epoch_idx)
-        for self.system.batch_idx, batch in enumerate(self.system.loader):
-            if self.system.batch_idx == self.steps_per_epoch and self.system.mode == "train":
+        loader = self._configure_loader(self.pipeline.get_loader(mode=self.system.mode, epoch=self.system.epoch_idx))
+        for self.system.batch_idx, batch in enumerate(loader):
+            if self.system.batch_idx == self.system.max_steps_per_epoch and self.system.mode == "train":
                 break
-            batch = self._configure_tensor(batch)
+            batch = self._configure_tensor(loader, batch)
             self._run_traces_on_batch_begin()
             prediction = self.network.run_step(batch, {"mode": self.system.mode, "warmup": False})
             self._run_traces_on_batch_end(batch, prediction)
@@ -144,12 +148,19 @@ class Estimator:
         self.network.unload_epoch()
         self._run_traces_on_epoch_end()
 
-    def _configure_tensor(self, batch):
-        if isinstance(self.system.loader, tf.data.Dataset):
-            if isinstance(self.network, TorchNetwork):
-                batch = to_tensor(batch, target_type="torch")
-        elif isinstance(self.network, TFNetwork):
-            batch = to_tensor(batch, target_type="tensorflow")
+    def _configure_loader(self, loader):
+        new_loader = loader
+        if isinstance(loader, DataLoader) and isinstance(self.network, TFNetwork):
+            data_type = to_type(to_tensor(loader.dataset[0], target_type="tensorflow"))
+            new_loader = tf.data.Dataset.from_generator(lambda: loader, data_type)
+            new_loader = new_loader.prefetch(1)
+            if self.system.max_steps_per_epoch and self.system.mode == "train":
+                new_loader = new_loader.take(self.system.max_steps_per_epoch)
+        return new_loader
+
+    def _configure_tensor(self, loader, batch):
+        if isinstance(loader, tf.data.Dataset) and isinstance(self.network, TorchNetwork):
+            batch = to_tensor(batch, target_type="torch")
         return batch
 
     def _run_traces_on_begin(self):
